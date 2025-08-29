@@ -91,7 +91,40 @@ const ResumeEditor = () => {
     const exportToPDF = async () => {
         setExporting(true)
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL}/compile-pdf`, {
+            // Check if API URL is configured
+            const apiUrl = import.meta.env.VITE_API_URL
+            if (!apiUrl) {
+                throw new Error('API URL not configured. Please check your environment variables.')
+            }
+
+            console.log('Exporting PDF using backend LaTeX compilation...')
+            console.log('API URL:', apiUrl)
+            console.log('Resume data:', resumeData)
+
+            // First, test the data structure with debug endpoint
+            try {
+                const debugResponse = await fetch(`${apiUrl}/debug-data`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        resumeData,
+                        resumeTitle: resume.title,
+                    }),
+                })
+                
+                if (debugResponse.ok) {
+                    const debugData = await debugResponse.json()
+                    console.log('Debug data structure:', debugData)
+                } else {
+                    console.warn('Debug endpoint failed, continuing with PDF export...')
+                }
+            } catch (debugError) {
+                console.warn('Debug endpoint error:', debugError)
+            }
+
+            const response = await fetch(`${apiUrl}/compile-pdf`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -102,23 +135,58 @@ const ResumeEditor = () => {
                 }),
             })
 
+            console.log('Response status:', response.status)
+            console.log('Response headers:', response.headers)
+
             if (!response.ok) {
-                throw new Error('Failed to compile PDF')
+                const errorText = await response.text()
+                console.error('Backend error response:', errorText)
+                
+                // Try to parse error details
+                let errorDetail = 'Unknown error'
+                try {
+                    const errorData = JSON.parse(errorText)
+                    errorDetail = errorData.detail || errorData.message || errorText
+                } catch {
+                    errorDetail = errorText
+                }
+                
+                throw new Error(`Backend compilation failed: ${errorDetail}`)
             }
 
             const blob = await response.blob()
+            console.log('PDF blob received, size:', blob.size, 'bytes')
+            
+            if (blob.size === 0) {
+                throw new Error('Received empty PDF file from backend')
+            }
+
             const url = window.URL.createObjectURL(blob)
             const link = document.createElement('a')
             link.href = url
-            link.download = `${resume.title}.pdf`
+            link.download = `${resume.title || 'resume'}.pdf`
             document.body.appendChild(link)
             link.click()
             document.body.removeChild(link)
             window.URL.revokeObjectURL(url)
 
-            toast.success('PDF exported successfully!')
+            toast.success('PDF exported successfully using LaTeX compilation!')
         } catch (error) {
-            toast.error('Error exporting PDF: ' + error.message)
+            console.error('PDF export error:', error)
+            
+            // Provide more helpful error messages
+            let userMessage = 'Error exporting PDF: '
+            if (error.message.includes('API URL not configured')) {
+                userMessage += 'Backend not configured. Please check your environment setup.'
+            } else if (error.message.includes('Backend compilation failed')) {
+                userMessage += error.message.replace('Backend compilation failed: ', '')
+            } else if (error.message.includes('Failed to fetch')) {
+                userMessage += 'Cannot connect to backend server. Please ensure the backend is running.'
+            } else {
+                userMessage += error.message
+            }
+            
+            toast.error(userMessage)
         } finally {
             setExporting(false)
         }
